@@ -153,6 +153,87 @@ Puerto:
 8761
 ```
 
+### Ejecución local
+
+Requisitos: JDK 21. No es necesario instalar Maven: `eureka-server` incluye
+Maven Wrapper y descargará Maven 3.10.0 la primera vez que se ejecute.
+Los comandos siguientes asumen que PowerShell parte desde la carpeta raíz del
+workspace. Define Java 21 solo en la terminal actual (ajusta la ruta si el JDK
+está instalado en otro lugar):
+
+```powershell
+$env:JAVA_HOME = 'D:\Program Files\Java\jdk-21.0.10'
+$env:Path = "$env:JAVA_HOME\bin;$env:Path"
+java -version
+```
+
+Ejecuta cada servicio en una terminal distinta y mantén sus procesos activos.
+Si se usan los valores predeterminados de los microservicios, MySQL debe estar
+disponible en `localhost:3306` y sus bases de datos deben existir.
+
+1. Inicia Eureka:
+
+   ```powershell
+   cd barriodigital-infra\eureka-server
+   .\mvnw.cmd spring-boot:run
+   ```
+
+   La consola queda disponible en <http://localhost:8761/>. El servidor no se
+   registra a sí mismo ni consulta otro registro.
+
+   Para ejecutar pruebas:
+
+   ```powershell
+   .\mvnw.cmd test
+   ```
+
+2. Inicia Catalog:
+
+   ```powershell
+   cd ms-barriodigital-catalog
+   .\mvnw.cmd spring-boot:run
+   ```
+
+   Catalog escucha en `http://localhost:8082` y se registra como `catalog-ms`.
+
+3. Inicia Requests:
+
+   ```powershell
+   cd ms-barriodigital-requests
+   .\mvnw.cmd spring-boot:run
+   ```
+
+   Requests escucha en `http://localhost:8081` y se registra como `request-ms`.
+   Ambos clientes usan `EUREKA_SERVER_URL`, cuyo valor predeterminado es
+   `http://localhost:8761/eureka/`. Requests utiliza Spring Cloud LoadBalancer
+   con el nombre lógico `http://catalog-ms`, resuelto desde Eureka.
+
+En el panel de Eureka deben aparecer `CATALOG-MS` y `REQUEST-MS`. Para comprobar
+que Requests descubre Catalog, se puede usar el flujo que consulta la
+disponibilidad del tipo de trámite; la llamada de Requests a `catalog-ms` será
+resuelta por el registro, sin configurar una URL fija. La interfaz REST de
+Eureka también está disponible en `http://localhost:8761/eureka/apps`.
+
+### VS Code
+
+Abre la carpeta `barriodigital-infra\eureka-server` con **File > Open Folder**.
+VS Code importa el proyecto Maven desde `pom.xml`; instala **Extension Pack for
+Java** si se solicita. La configuración de esta carpeta selecciona Java 21 y
+define el perfil **Run Eureka Server** en **Run and Debug**. También se puede
+usar **Run** sobre el método `main` una vez que termine la importación Maven.
+La ruta del JDK del archivo `.vscode/settings.json` debe existir en el equipo;
+si es diferente, actualiza allí el valor de `java.configuration.runtimes`.
+No abras ni ejecutes solamente `EurekaServerApplication.java` como archivo
+Java suelto: eso evita que VS Code resuelva las dependencias de Spring. Si el
+archivo aparece como *non-project*, ejecuta **Java: Import Java Projects in
+Workspace** desde la paleta de comandos y espera a que finalice la importación
+de Maven antes de pulsar **Run**.
+
+Para levantarlo desde el terminal integrado de VS Code, establece `JAVA_HOME` y
+`Path` en esa terminal como se mostró arriba y ejecuta `.\mvnw.cmd
+spring-boot:run`. Esas variables solo afectan a la terminal actual y no cambian
+el `PATH` global de Windows.
+
 ## Resiliencia
 
 ```text

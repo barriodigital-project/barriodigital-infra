@@ -1,0 +1,17 @@
+{
+    "java.configuration.updateBuildConfiguration": "automatic",
+    "maven.executable.preferMavenWrapper": true,
+    "maven.terminal.customEnv": [
+        {
+            "environmentVariable": "JAVA_HOME",
+            "value": "D:\\Program Files\\Java\\jdk-21.0.10"
+        }
+    ],
+    "java.configuration.runtimes": [
+        {
+            "name": "JavaSE-21",
+            "path": "D:\\Program Files\\Java\\jdk-21.0.10",
+            "default": true
+        }
+    ]
+}
