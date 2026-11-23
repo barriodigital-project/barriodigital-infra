@@ -1,0 +1,242 @@
+version: "3.9"
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_password
+      MYSQL_DATABASE: requests_db
+      MYSQL_USER: barriodigital_app
+      MYSQL_PASSWORD_FILE: /run/secrets/db_app_password
+    secrets:
+      - source: db_password
+        target: db_password
+      - source: db_app_password
+        target: db_app_password
+    configs:
+      - source: mysql_init
+        target: /docker-entrypoint-initdb.d/01-databases.sql
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 180s
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+
+  eureka:
+    image: barriodigital/eureka-server:local
+    ports:
+      - target: 8761
+        published: ${EUREKA_PORT:-8761}
+        protocol: tcp
+        mode: ingress
+    networks:
+      - backend
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+
+  catalog:
+    image: barriodigital/catalog:local
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: catalog_db
+      DB_USERNAME: barriodigital_app
+      DB_PASSWORD_FILE: /run/secrets/db_app_password
+      JPA_DDL_AUTO: update
+      EUREKA_SERVER_URL: http://eureka:8761/eureka/
+    secrets:
+      - source: db_app_password
+        target: db_app_password
+    networks:
+      - backend
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 768M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+
+  requests:
+    image: barriodigital/requests:local
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: requests_db
+      DB_USERNAME: barriodigital_app
+      DB_PASSWORD_FILE: /run/secrets/db_app_password
+      JPA_DDL_AUTO: update
+      EUREKA_SERVER_URL: http://eureka:8761/eureka/
+      CATALOG_SERVICE_URL: http://catalog-ms
+      HTTP_CONNECT_TIMEOUT: ${HTTP_CONNECT_TIMEOUT:-2s}
+      HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:-5s}
+    secrets:
+      - source: db_app_password
+        target: db_app_password
+    networks:
+      - backend
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 768M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+
+  crews:
+    image: barriodigital/crews:local
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: crews_db
+      DB_USERNAME: barriodigital_app
+      DB_PASSWORD_FILE: /run/secrets/db_app_password
+      JPA_DDL_AUTO: update
+      EUREKA_SERVER_URL: http://eureka:8761/eureka/
+    secrets:
+      - source: db_app_password
+        target: db_app_password
+    networks:
+      - backend
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 768M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+
+  report:
+    image: barriodigital/report:local
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: report_db
+      DB_USERNAME: barriodigital_app
+      DB_PASSWORD_FILE: /run/secrets/db_app_password
+      JPA_DDL_AUTO: update
+      EUREKA_SERVER_URL: http://eureka:8761/eureka/
+    secrets:
+      - source: db_app_password
+        target: db_app_password
+    networks:
+      - backend
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 768M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+
+  bff:
+    image: barriodigital/bff:local
+    environment:
+      EUREKA_SERVER_URL: http://eureka:8761/eureka/
+      REQUESTS_SERVICE_URL: http://request-ms
+      CATALOG_SERVICE_URL: http://catalog-ms
+      CREWS_SERVICE_URL: http://crews-ms
+      REPORT_SERVICE_URL: http://report-ms
+      JWT_JWK_SET_URI: ${JWT_JWK_SET_URI:-https://example.invalid/.well-known/jwks.json}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:4200}
+      HTTP_CONNECT_TIMEOUT: ${HTTP_CONNECT_TIMEOUT:-2s}
+      HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:-5s}
+    ports:
+      - target: 8080
+        published: ${BFF_PORT:-8080}
+        protocol: tcp
+        mode: ingress
+    networks:
+      - backend
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 768M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+
+networks:
+  backend:
+    driver: overlay
+    attachable: true
+
+volumes:
+  mysql_data:
+
+configs:
+  mysql_init:
+    file: ./docker/mysql/init/01-databases.sql
+
+secrets:
+  db_password:
+    external: true
+    name: barriodigital_db_password
+  db_app_password:
+    external: true
+    name: barriodigital_db_app_password
