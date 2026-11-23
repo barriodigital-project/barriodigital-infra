@@ -51,7 +51,21 @@ La solicitud de implementación menciona IE1–IE17, pero no incluye definicione
 
 ## 6. Repositorios y cambios locales
 
-El workspace no tiene un `.git` raíz: cada componente mantiene su propio repositorio. Antes de finalizar, revisar los estados por repositorio y los commits locales. No se debe incorporar el `.class` modificado previamente de Eureka ni los valores del `.env`. No se hace push.
+El workspace no tiene un `.git` raíz: cada componente mantiene su propio repositorio. Se crearon commits locales, sin push:
+
+| Repositorio | Commit |
+|---|---|
+| Contracts | `105c107` |
+| BFF | `f51b66f` |
+| Requests | `ccff02a` |
+| Catalog | `8af1f6c` |
+| Crews | `4ce2515` |
+| Report | `512ecdc` |
+| Infra | `fb42178` |
+
+Requests ya tenía un commit adicional local antes de estos cambios; se preservó. El `.class` modificado previamente de Eureka se dejó fuera del commit. El `.env` está en la raíz del workspace, no se incorporó a ningún repositorio y sus valores no se incluyeron en la documentación.
+
+Audit y Notify siguen limpios. Se intentó mover cada repositorio al directorio hermano `Barrio Digital-archived`, pero Windows informó que otro proceso mantiene abierto cada directorio. No se borró ni copió contenido; el traslado físico queda pendiente de liberar el bloqueo.
 
 ## 7. Próximos pasos
 
