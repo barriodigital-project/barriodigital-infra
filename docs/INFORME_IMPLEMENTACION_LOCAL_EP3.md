@@ -65,7 +65,7 @@ El workspace no tiene un `.git` raíz: cada componente mantiene su propio reposi
 
 Requests ya tenía un commit adicional local antes de estos cambios; se preservó. El `.class` modificado previamente de Eureka se dejó fuera del commit. El `.env` está en la raíz del workspace, no se incorporó a ningún repositorio y sus valores no se incluyeron en la documentación.
 
-Audit y Notify siguen limpios. Se intentó mover cada repositorio al directorio hermano `Barrio Digital-archived`, pero Windows informó que otro proceso mantiene abierto cada directorio. No se borró ni copió contenido; el traslado físico queda pendiente de liberar el bloqueo.
+Audit y Notify siguen limpios. Se intentó mover cada repositorio al directorio hermano `Barrio Digital-archived`, pero Windows siguió informando que otro proceso mantiene abierto cada directorio. En el último intento aún había 15 procesos `Code.exe`; no se identificó el PID propietario del bloqueo y no se cerró ningún proceso. No se borró ni copió contenido; el traslado físico queda pendiente de cerrar el workspace de VS Code y liberar el bloqueo.
 
 ## 7. Próximos pasos
 
