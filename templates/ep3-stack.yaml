@@ -24,6 +24,15 @@ Parameters:
     Type: String
     Default: LabRole
     AllowedPattern: '[A-Za-z0-9+=,.@_-]+'
+  RequestEventsQueueUrl:
+    Type: String
+    Description: URL of the existing barriodigital-requests-events queue.
+  RequestEventsQueueArn:
+    Type: String
+    Description: ARN of the existing barriodigital-requests-events queue.
+  RequestEventsDlqUrl:
+    Type: String
+    Description: URL of the existing barriodigital-requests-dlq queue.
   LambdaImageUri:
     Type: String
     AllowedPattern: '[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/.+'
@@ -38,25 +47,6 @@ Parameters:
     Default: https://localhost
 
 Resources:
-  RequestEventsDlq:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub '${StackLabel}-requests-dlq'
-      MessageRetentionPeriod: 1209600
-      SqsManagedSseEnabled: true
-
-  RequestEventsQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub '${StackLabel}-requests'
-      MessageRetentionPeriod: 345600
-      ReceiveMessageWaitTimeSeconds: 20
-      VisibilityTimeout: 180
-      SqsManagedSseEnabled: true
-      RedrivePolicy:
-        deadLetterTargetArn: !GetAtt RequestEventsDlq.Arn
-        maxReceiveCount: 5
-
   LambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -146,7 +136,7 @@ Resources:
             Effect: Allow
             Action:
               - sqs:SendMessage
-            Resource: !GetAtt RequestEventsQueue.Arn
+            Resource: !Ref RequestEventsQueueArn
           - Sid: ConsumeRequestEvents
             Effect: Allow
             Action:
@@ -154,7 +144,7 @@ Resources:
               - sqs:DeleteMessage
               - sqs:GetQueueAttributes
               - sqs:ChangeMessageVisibility
-            Resource: !GetAtt RequestEventsQueue.Arn
+            Resource: !Ref RequestEventsQueueArn
           - Sid: WriteLambdaLogs
             Effect: Allow
             Action:
@@ -199,7 +189,7 @@ Resources:
   RequestEventsMapping:
     Type: AWS::Lambda::EventSourceMapping
     Properties:
-      EventSourceArn: !GetAtt RequestEventsQueue.Arn
+      EventSourceArn: !Ref RequestEventsQueueArn
       FunctionName: !Ref ReportEventConsumer
       Enabled: true
       BatchSize: 5
@@ -331,11 +321,11 @@ Resources:
 Outputs:
   RequestEventsQueueUrl:
     Description: Set as REQUEST_EVENTS_QUEUE_URL in the Swarm environment.
-    Value: !Ref RequestEventsQueue
+    Value: !Ref RequestEventsQueueUrl
   RequestEventsQueueArn:
-    Value: !GetAtt RequestEventsQueue.Arn
+    Value: !Ref RequestEventsQueueArn
   RequestEventsDlqUrl:
-    Value: !Ref RequestEventsDlq
+    Value: !Ref RequestEventsDlqUrl
   ReportLambdaName:
     Value: !Ref ReportEventConsumer
   ApiEndpoint:

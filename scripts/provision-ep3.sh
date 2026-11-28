@@ -106,6 +106,29 @@ account_id="$(aws sts get-caller-identity --query Account --output text)" \
 [[ "$LAMBDA_IMAGE_URI" == "${account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com/"* ]] \
     || fail "LAMBDA_IMAGE_URI does not belong to the active AWS account."
 
+queue_url="$(aws sqs get-queue-url \
+    --region "$AWS_REGION" \
+    --queue-name barriodigital-requests-events \
+    --query QueueUrl \
+    --output text)" || fail "Could not find the existing barriodigital-requests-events queue."
+queue_arn="$(aws sqs get-queue-attributes \
+    --region "$AWS_REGION" \
+    --queue-url "$queue_url" \
+    --attribute-names QueueArn \
+    --query 'Attributes.QueueArn' \
+    --output text)" || fail "Could not read the existing request events queue ARN."
+dlq_url="$(aws sqs get-queue-url \
+    --region "$AWS_REGION" \
+    --queue-name barriodigital-requests-dlq \
+    --query QueueUrl \
+    --output text)" || fail "Could not find the existing barriodigital-requests-dlq queue."
+dlq_arn="$(aws sqs get-queue-attributes \
+    --region "$AWS_REGION" \
+    --queue-url "$dlq_url" \
+    --attribute-names QueueArn \
+    --query 'Attributes.QueueArn' \
+    --output text)" || fail "Could not read the existing requests DLQ ARN."
+
 for instance_id in "$MANAGER_INSTANCE_ID" "$WORKER_INSTANCE_ID"; do
     instance_details="$(aws ec2 describe-instances \
         --region "$AWS_REGION" \
@@ -192,6 +215,23 @@ if [[ "$APPLY" != true ]]; then
     exit 0
 fi
 
+queue_attributes="$(python3 -c '
+import json
+import sys
+print(json.dumps({
+    "VisibilityTimeout": "180",
+    "RedrivePolicy": json.dumps({
+        "deadLetterTargetArn": sys.argv[1],
+        "maxReceiveCount": "5"
+    })
+}))
+' "$dlq_arn")" || fail "Could not prepare the existing queue redrive policy."
+aws sqs set-queue-attributes \
+    --region "$AWS_REGION" \
+    --queue-url "$queue_url" \
+    --attributes "$queue_attributes" \
+    || fail "Could not configure the existing queue visibility timeout and DLQ."
+
 aws cloudformation deploy \
     --region "$AWS_REGION" \
     --stack-name "$EP3_STACK_NAME" \
@@ -207,6 +247,9 @@ aws cloudformation deploy \
         "WorkerInstanceId=$WORKER_INSTANCE_ID" \
         "ManagerPrivateIp=$MANAGER_PRIVATE_IP" \
         "LambdaRoleName=$LAMBDA_ROLE_NAME" \
+        "RequestEventsQueueUrl=$queue_url" \
+        "RequestEventsQueueArn=$queue_arn" \
+        "RequestEventsDlqUrl=$dlq_url" \
         "LambdaImageUri=$LAMBDA_IMAGE_URI" \
         "CognitoIssuer=$JWT_ISSUER_URI" \
         "CognitoClientId=$JWT_CLIENT_ID" \
