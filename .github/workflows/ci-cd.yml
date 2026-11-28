@@ -1,4 +1,5 @@
-name: EUREKA CI/CD
+
+name: Eureka CI/CD
 
 on:
   push:
@@ -29,9 +30,10 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
           cache: maven
+          cache-dependency-path: eureka-server/pom.xml
 
       - name: Build and test
-        run: mvn -B clean verify
+        run: mvn -B -f eureka-server/pom.xml clean verify
 
   publish:
     needs: build-and-test
@@ -61,7 +63,8 @@ jobs:
         run: |
           docker build \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+            ./eureka-server
 
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
