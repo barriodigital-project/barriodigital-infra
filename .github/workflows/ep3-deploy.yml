@@ -20,7 +20,7 @@ jobs:
       VPC_ID: ${{ vars.VPC_ID }}
       VPC_SUBNET_IDS: ${{ vars.VPC_SUBNET_IDS }}
       SWARM_SECURITY_GROUP_ID: ${{ vars.SWARM_SECURITY_GROUP_ID }}
-      LAMBDA_ROLE_NAME: ${{ vars.LAMBDA_ROLE_NAME }}
+      LAMBDA_ROLE_NAME: LabRole
       JWT_ISSUER_URI: ${{ vars.JWT_ISSUER_URI }}
       JWT_CLIENT_ID: ${{ vars.JWT_CLIENT_ID }}
       CORS_ALLOWED_ORIGINS: ${{ vars.CORS_ALLOWED_ORIGINS }}
