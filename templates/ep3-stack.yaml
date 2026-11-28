@@ -123,48 +123,8 @@ Resources:
       SourceSecurityGroupId: !GetAtt BffLoadBalancerSecurityGroup.GroupId
       Description: Allow BFF access only through the internal NLB
 
-  LambdaRolePolicy:
-    Type: AWS::IAM::Policy
-    Properties:
-      PolicyName: !Sub '${StackLabel}-sqs-and-lambda'
-      Roles:
-        - !Ref LambdaRoleName
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: PublishRequestEvents
-            Effect: Allow
-            Action:
-              - sqs:SendMessage
-            Resource: !Ref RequestEventsQueueArn
-          - Sid: ConsumeRequestEvents
-            Effect: Allow
-            Action:
-              - sqs:ReceiveMessage
-              - sqs:DeleteMessage
-              - sqs:GetQueueAttributes
-              - sqs:ChangeMessageVisibility
-            Resource: !Ref RequestEventsQueueArn
-          - Sid: WriteLambdaLogs
-            Effect: Allow
-            Action:
-              - logs:CreateLogGroup
-              - logs:CreateLogStream
-              - logs:PutLogEvents
-            Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*'
-          - Sid: ManageLambdaVpcInterfaces
-            Effect: Allow
-            Action:
-              - ec2:CreateNetworkInterface
-              - ec2:DescribeNetworkInterfaces
-              - ec2:DeleteNetworkInterface
-              - ec2:AssignPrivateIpAddresses
-              - ec2:UnassignPrivateIpAddresses
-            Resource: '*'
-
   ReportEventConsumer:
     Type: AWS::Lambda::Function
-    DependsOn: LambdaRolePolicy
     Properties:
       FunctionName: !Sub '${StackLabel}-report-consumer'
       PackageType: Image
