@@ -118,6 +118,10 @@ services:
       CATALOG_SERVICE_URL: ${CATALOG_SERVICE_URL:-http://catalog-ms}
       HTTP_CONNECT_TIMEOUT: ${HTTP_CONNECT_TIMEOUT:-2s}
       HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:-5s}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      SQS_EVENTS_ENABLED: ${SQS_EVENTS_ENABLED:?Set SQS_EVENTS_ENABLED to true}
+      REQUEST_EVENTS_QUEUE_URL: ${REQUEST_EVENTS_QUEUE_URL:?Set REQUEST_EVENTS_QUEUE_URL}
+      SQS_POLL_INTERVAL_MS: ${SQS_POLL_INTERVAL_MS:-1000}
     secrets:
       - source: db_app_password
         target: db_app_password
@@ -196,6 +200,11 @@ services:
         target: db_app_password
     networks:
       - backend
+    ports:
+      - target: 8087
+        published: 8087
+        protocol: tcp
+        mode: ingress
     deploy:
       replicas: 1
       placement:

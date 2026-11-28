@@ -1,0 +1,349 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: BarrioDigital EP3 SQS, Lambda and authenticated private BFF integration.
+
+Parameters:
+  StackLabel:
+    Type: String
+    Default: barriodigital-ep3
+    AllowedPattern: '[A-Za-z0-9-]+'
+    MaxLength: 28
+  SwarmVpcId:
+    Type: AWS::EC2::VPC::Id
+  SwarmSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  SwarmSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  ManagerInstanceId:
+    Type: AWS::EC2::Instance::Id
+  WorkerInstanceId:
+    Type: AWS::EC2::Instance::Id
+  ManagerPrivateIp:
+    Type: String
+    AllowedPattern: '[0-9]{1,3}(\.[0-9]{1,3}){3}'
+  LambdaRoleName:
+    Type: String
+    Default: LabRole
+    AllowedPattern: '[A-Za-z0-9+=,.@_-]+'
+  LambdaImageUri:
+    Type: String
+    AllowedPattern: '[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/.+'
+  CognitoIssuer:
+    Type: String
+    AllowedPattern: 'https://cognito-idp\.[a-z0-9-]+\.amazonaws\.com/[A-Za-z0-9_-]+'
+  CognitoClientId:
+    Type: String
+    AllowedPattern: '[A-Za-z0-9]+'
+  ApiCorsAllowedOrigins:
+    Type: CommaDelimitedList
+    Default: https://localhost
+
+Resources:
+  RequestEventsDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${StackLabel}-requests-dlq'
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  RequestEventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${StackLabel}-requests'
+      MessageRetentionPeriod: 345600
+      ReceiveMessageWaitTimeSeconds: 20
+      VisibilityTimeout: 180
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt RequestEventsDlq.Arn
+        maxReceiveCount: 5
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Lambda to internal Report endpoint only
+      VpcId: !Ref SwarmVpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 8087
+          ToPort: 8087
+          DestinationSecurityGroupId: !Ref SwarmSecurityGroupId
+      Tags:
+        - Key: Name
+          Value: !Sub '${StackLabel}-lambda'
+
+  ReportIngressFromLambda:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SwarmSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 8087
+      ToPort: 8087
+      SourceSecurityGroupId: !GetAtt LambdaSecurityGroup.GroupId
+      Description: Allow the SQS consumer Lambda to reach internal Report
+
+  BffLoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Internal NLB to the Swarm BFF only
+      VpcId: !Ref SwarmVpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          DestinationSecurityGroupId: !Ref SwarmSecurityGroupId
+      Tags:
+        - Key: Name
+          Value: !Sub '${StackLabel}-bff-nlb'
+
+  ApiVpcLinkSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: API Gateway VPC Link to internal BFF NLB
+      VpcId: !Ref SwarmVpcId
+      Tags:
+        - Key: Name
+          Value: !Sub '${StackLabel}-vpc-link'
+
+  BffNlbIngressFromVpcLink:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt BffLoadBalancerSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourceSecurityGroupId: !GetAtt ApiVpcLinkSecurityGroup.GroupId
+      Description: Allow API Gateway VPC Link traffic
+
+  VpcLinkEgressToBffNlb:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !GetAtt ApiVpcLinkSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      DestinationSecurityGroupId: !GetAtt BffLoadBalancerSecurityGroup.GroupId
+
+  BffIngressFromLoadBalancer:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SwarmSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+      SourceSecurityGroupId: !GetAtt BffLoadBalancerSecurityGroup.GroupId
+      Description: Allow BFF access only through the internal NLB
+
+  LambdaRolePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub '${StackLabel}-sqs-and-lambda'
+      Roles:
+        - !Ref LambdaRoleName
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublishRequestEvents
+            Effect: Allow
+            Action:
+              - sqs:SendMessage
+            Resource: !GetAtt RequestEventsQueue.Arn
+          - Sid: ConsumeRequestEvents
+            Effect: Allow
+            Action:
+              - sqs:ReceiveMessage
+              - sqs:DeleteMessage
+              - sqs:GetQueueAttributes
+              - sqs:ChangeMessageVisibility
+            Resource: !GetAtt RequestEventsQueue.Arn
+          - Sid: WriteLambdaLogs
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*'
+          - Sid: ManageLambdaVpcInterfaces
+            Effect: Allow
+            Action:
+              - ec2:CreateNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DeleteNetworkInterface
+              - ec2:AssignPrivateIpAddresses
+              - ec2:UnassignPrivateIpAddresses
+            Resource: '*'
+
+  ReportEventConsumer:
+    Type: AWS::Lambda::Function
+    DependsOn: LambdaRolePolicy
+    Properties:
+      FunctionName: !Sub '${StackLabel}-report-consumer'
+      PackageType: Image
+      Code:
+        ImageUri: !Ref LambdaImageUri
+      Role: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${LambdaRoleName}'
+      MemorySize: 256
+      Timeout: 15
+      VpcConfig:
+        SubnetIds: !Ref SwarmSubnetIds
+        SecurityGroupIds:
+          - !GetAtt LambdaSecurityGroup.GroupId
+      Environment:
+        Variables:
+          REPORT_API_URL: !Sub 'http://${ManagerPrivateIp}:8087'
+          REPORT_API_TIMEOUT_SECONDS: '10'
+          REPORT_API_CONNECT_TIMEOUT_SECONDS: '3'
+      Tags:
+        - Key: Name
+          Value: !Sub '${StackLabel}-report-consumer'
+
+  RequestEventsMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt RequestEventsQueue.Arn
+      FunctionName: !Ref ReportEventConsumer
+      Enabled: true
+      BatchSize: 5
+      MaximumBatchingWindowInSeconds: 1
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+  BffTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${StackLabel}-bff'
+      VpcId: !Ref SwarmVpcId
+      Protocol: TCP
+      Port: 8080
+      TargetType: instance
+      Targets:
+        - Id: !Ref ManagerInstanceId
+          Port: 8080
+        - Id: !Ref WorkerInstanceId
+          Port: 8080
+      HealthCheckEnabled: true
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: '8080'
+      HealthCheckPath: /actuator/health
+      Matcher:
+        HttpCode: '200-399'
+
+  BffInternalLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${StackLabel}-bff'
+      Scheme: internal
+      Type: network
+      IpAddressType: ipv4
+      Subnets: !Ref SwarmSubnetIds
+      SecurityGroups:
+        - !GetAtt BffLoadBalancerSecurityGroup.GroupId
+      LoadBalancerAttributes:
+        - Key: load_balancing.cross_zone.enabled
+          Value: 'true'
+
+  BffListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref BffInternalLoadBalancer
+      Protocol: TCP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref BffTargetGroup
+
+  ApiGatewayVpcLink:
+    Type: AWS::ApiGatewayV2::VpcLink
+    Properties:
+      Name: !Sub '${StackLabel}-bff'
+      SubnetIds: !Ref SwarmSubnetIds
+      SecurityGroupIds:
+        - !GetAtt ApiVpcLinkSecurityGroup.GroupId
+
+  BarrioDigitalHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${StackLabel}-http-api'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: !Ref ApiCorsAllowedOrigins
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - authorization
+          - content-type
+        MaxAge: 3600
+
+  CognitoJwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      Name: CognitoAccessTokens
+      AuthorizerType: JWT
+      IdentitySource:
+        - '$request.header.Authorization'
+      JwtConfiguration:
+        Audience:
+          - !Ref CognitoClientId
+        Issuer: !Ref CognitoIssuer
+
+  BffApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      IntegrationUri: !Ref BffListener
+      ConnectionType: VPC_LINK
+      ConnectionId: !Ref ApiGatewayVpcLink
+      PayloadFormatVersion: '1.0'
+      TimeoutInMillis: 30000
+
+  BffProxyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'ANY /{proxy+}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffRootRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'ANY /'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BarrioDigitalApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      StageName: '$default'
+      AutoDeploy: true
+
+Outputs:
+  RequestEventsQueueUrl:
+    Description: Set as REQUEST_EVENTS_QUEUE_URL in the Swarm environment.
+    Value: !Ref RequestEventsQueue
+  RequestEventsQueueArn:
+    Value: !GetAtt RequestEventsQueue.Arn
+  RequestEventsDlqUrl:
+    Value: !Ref RequestEventsDlq
+  ReportLambdaName:
+    Value: !Ref ReportEventConsumer
+  ApiEndpoint:
+    Description: Public HTTP API protected by the Cognito JWT authorizer.
+    Value: !GetAtt BarrioDigitalHttpApi.ApiEndpoint
+  BffTargetGroupArn:
+    Value: !Ref BffTargetGroup
+  BffNlbDnsName:
+    Value: !GetAtt BffInternalLoadBalancer.DNSName
+  BffLoadBalancerSecurityGroupId:
+    Value: !GetAtt BffLoadBalancerSecurityGroup.GroupId

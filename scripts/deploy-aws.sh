@@ -7,15 +7,21 @@ fail() {
 }
 
 usage() {
-    printf 'Usage: %s --env-file PATH\n' "${0##*/}"
+    printf 'Usage: %s --env-file PATH [--set KEY=VALUE ...]\n' "${0##*/}"
 }
 
 ENV_FILE=""
+declare -a OVERRIDES=()
 while (($#)); do
     case "$1" in
         --env-file)
             (($# >= 2)) || fail "--env-file requires a path."
             ENV_FILE=$2
+            shift 2
+            ;;
+        --set)
+            (($# >= 2)) || fail "--set requires a KEY=VALUE argument."
+            OVERRIDES+=("$2")
             shift 2
             ;;
         --help|-h)
@@ -57,7 +63,7 @@ load_env_file() {
         fi
 
         case "$key" in
-            AWS_REGION|ECR_REGISTRY|BFF_IMAGE_TAG|CATALOG_IMAGE_TAG|REQUESTS_IMAGE_TAG|CREWS_IMAGE_TAG|REPORT_IMAGE_TAG|EUREKA_IMAGE_TAG|BFF_PORT|JWT_JWK_SET_URI|JWT_ISSUER_URI|JWT_CLIENT_ID|CORS_ALLOWED_ORIGINS|HTTP_CONNECT_TIMEOUT|HTTP_READ_TIMEOUT|EUREKA_SERVER_URL|REQUESTS_SERVICE_URL|CATALOG_SERVICE_URL|CREWS_SERVICE_URL|REPORT_SERVICE_URL)
+        AWS_REGION|ECR_REGISTRY|BFF_IMAGE_TAG|CATALOG_IMAGE_TAG|REQUESTS_IMAGE_TAG|CREWS_IMAGE_TAG|REPORT_IMAGE_TAG|EUREKA_IMAGE_TAG|BFF_PORT|JWT_JWK_SET_URI|JWT_ISSUER_URI|JWT_CLIENT_ID|CORS_ALLOWED_ORIGINS|HTTP_CONNECT_TIMEOUT|HTTP_READ_TIMEOUT|EUREKA_SERVER_URL|REQUESTS_SERVICE_URL|CATALOG_SERVICE_URL|CREWS_SERVICE_URL|REPORT_SERVICE_URL|SQS_EVENTS_ENABLED|REQUEST_EVENTS_QUEUE_URL|SQS_POLL_INTERVAL_MS)
                 printf -v "$key" '%s' "$value"
                 export "$key"
                 ;;
@@ -69,6 +75,21 @@ load_env_file() {
 
 load_env_file
 
+for setting in "${OVERRIDES[@]}"; do
+    [[ "$setting" =~ ^([A-Z_][A-Z0-9_]*)=(.*)$ ]] || fail "--set must use KEY=VALUE."
+    key=${BASH_REMATCH[1]}
+    value=${BASH_REMATCH[2]}
+    case "$key" in
+        REQUEST_EVENTS_QUEUE_URL|SQS_EVENTS_ENABLED|SQS_POLL_INTERVAL_MS|BFF_IMAGE_TAG|CATALOG_IMAGE_TAG|REQUESTS_IMAGE_TAG|CREWS_IMAGE_TAG|REPORT_IMAGE_TAG|EUREKA_IMAGE_TAG)
+            printf -v "$key" '%s' "$value"
+            export "$key"
+            ;;
+        *)
+            fail "--set does not allow overriding $key."
+            ;;
+    esac
+done
+
 command -v aws >/dev/null 2>&1 || fail "AWS CLI is not installed."
 command -v docker >/dev/null 2>&1 || fail "Docker CLI is not installed."
 
@@ -79,6 +100,14 @@ export AWS_REGION
 for variable in JWT_JWK_SET_URI JWT_ISSUER_URI JWT_CLIENT_ID CORS_ALLOWED_ORIGINS; do
     [[ -n "${!variable:-}" ]] || fail "$variable must be set in $ENV_FILE."
 done
+
+[[ "${SQS_EVENTS_ENABLED:-}" == "true" ]] \
+    || fail "Set SQS_EVENTS_ENABLED=true in $ENV_FILE after provisioning the EP3 queue."
+[[ "${REQUEST_EVENTS_QUEUE_URL:-}" =~ ^https://sqs\.[a-z0-9-]+\.amazonaws\.com/[0-9]{12}/[A-Za-z0-9_-]+$ ]] \
+    || fail "Set REQUEST_EVENTS_QUEUE_URL to the SQS queue URL from the EP3 stack."
+[[ "$SQS_POLL_INTERVAL_MS" =~ ^[0-9]+$ ]] && ((SQS_POLL_INTERVAL_MS > 0)) \
+    || fail "SQS_POLL_INTERVAL_MS must be a positive integer."
+export SQS_EVENTS_ENABLED REQUEST_EVENTS_QUEUE_URL
 
 [[ "$JWT_JWK_SET_URI" =~ ^https://[^/]+/.+ ]] \
     || fail "JWT_JWK_SET_URI must be a complete HTTPS URL."
@@ -119,6 +148,7 @@ export BFF_PORT
 
 : "${HTTP_CONNECT_TIMEOUT:=2s}"
 : "${HTTP_READ_TIMEOUT:=5s}"
+: "${SQS_POLL_INTERVAL_MS:=1000}"
 : "${EUREKA_SERVER_URL:=http://eureka:8761/eureka/}"
 : "${REQUESTS_SERVICE_URL:=http://request-ms}"
 : "${CATALOG_SERVICE_URL:=http://catalog-ms}"
@@ -131,6 +161,7 @@ export BFF_PORT
 : "${REPORT_IMAGE_TAG:=latest}"
 : "${EUREKA_IMAGE_TAG:=latest}"
 export HTTP_CONNECT_TIMEOUT HTTP_READ_TIMEOUT EUREKA_SERVER_URL
+export SQS_POLL_INTERVAL_MS
 export REQUESTS_SERVICE_URL CATALOG_SERVICE_URL CREWS_SERVICE_URL REPORT_SERVICE_URL
 export BFF_IMAGE_TAG CATALOG_IMAGE_TAG REQUESTS_IMAGE_TAG CREWS_IMAGE_TAG REPORT_IMAGE_TAG EUREKA_IMAGE_TAG
 
