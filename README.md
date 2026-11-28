@@ -257,7 +257,7 @@ se detallan en los README de cada servicio y en los contratos OpenAPI.
 | Falta `DB_PASSWORD` | Revisar que exista el `.env` raíz y que contenga la clave, sin imprimir el valor. |
 | MySQL queda `unhealthy` | Revisar `docker compose logs mysql`; comprobar que el volumen no tenga credenciales de un arranque anterior incompatibles. |
 | Servicio no aparece en Eureka | Revisar salud de Eureka, `EUREKA_SERVER_URL` y `docker compose logs <servicio>`. |
-| Requests no descubre Catalog | Confirmar que Catalog aparezca como `CATALOG-MS` y que `CATALOG_SERVICE_URL` use el ID lógico `http://catalog-ms`. |
+| Requests no conecta con Catalog | Confirmar que el DNS `catalog` resuelva en la red compartida y que `CATALOG_SERVICE_URL` use `http://catalog:8082`. |
 | BFF falla al llamar un servicio | Comprobar que los nombres DNS y puertos internos de `REQUESTS_SERVICE_URL`, `CATALOG_SERVICE_URL`, `CREWS_SERVICE_URL` y `REPORT_SERVICE_URL` coincidan con el stack. |
 | BFF responde 401/403 | Es esperado sin JWT válido o sin rol; configurar un JWKS real y claims de roles antes de probar rutas protegidas. |
 | Cambio de contraseña no se aplica en Swarm | La contraseña de MySQL ya persistida y el secreto externo no se rotan automáticamente; planificar la rotación. |

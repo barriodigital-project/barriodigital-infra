@@ -104,7 +104,7 @@ services:
       DB_PASSWORD_FILE: /run/secrets/db_app_password
       JPA_DDL_AUTO: update
       EUREKA_SERVER_URL: http://eureka:8761/eureka/
-      CATALOG_SERVICE_URL: http://catalog-ms
+      CATALOG_SERVICE_URL: http://catalog:8082
       HTTP_CONNECT_TIMEOUT: ${HTTP_CONNECT_TIMEOUT:-2s}
       HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:-5s}
     secrets:
