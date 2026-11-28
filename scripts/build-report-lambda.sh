@@ -39,7 +39,7 @@ aws ecr get-login-password --region "$AWS_REGION" \
     | docker login --username AWS --password-stdin "$registry" \
     || fail "Could not authenticate Docker to ECR."
 
-docker build --tag "$image_uri" "$LAMBDA_DIR" \
+docker build --platform linux/amd64 --provenance=false --sbom=false --tag "$image_uri" "$LAMBDA_DIR" \
     || fail "Could not build the Report event consumer image."
 docker push "$image_uri" || fail "Could not push the Report event consumer image."
 
