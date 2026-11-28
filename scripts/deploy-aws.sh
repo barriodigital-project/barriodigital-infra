@@ -57,7 +57,7 @@ load_env_file() {
         fi
 
         case "$key" in
-            AWS_REGION|ECR_REGISTRY|BFF_IMAGE_TAG|CATALOG_IMAGE_TAG|REQUESTS_IMAGE_TAG|CREWS_IMAGE_TAG|REPORT_IMAGE_TAG|EUREKA_IMAGE_TAG|BFF_PORT|JWT_JWK_SET_URI|CORS_ALLOWED_ORIGINS|HTTP_CONNECT_TIMEOUT|HTTP_READ_TIMEOUT|EUREKA_SERVER_URL|REQUESTS_SERVICE_URL|CATALOG_SERVICE_URL|CREWS_SERVICE_URL|REPORT_SERVICE_URL)
+            AWS_REGION|ECR_REGISTRY|BFF_IMAGE_TAG|CATALOG_IMAGE_TAG|REQUESTS_IMAGE_TAG|CREWS_IMAGE_TAG|REPORT_IMAGE_TAG|EUREKA_IMAGE_TAG|BFF_PORT|JWT_JWK_SET_URI|JWT_ISSUER_URI|JWT_CLIENT_ID|CORS_ALLOWED_ORIGINS|HTTP_CONNECT_TIMEOUT|HTTP_READ_TIMEOUT|EUREKA_SERVER_URL|REQUESTS_SERVICE_URL|CATALOG_SERVICE_URL|CREWS_SERVICE_URL|REPORT_SERVICE_URL)
                 printf -v "$key" '%s' "$value"
                 export "$key"
                 ;;
@@ -76,7 +76,7 @@ AWS_REGION=${AWS_REGION:-us-east-1}
 [[ "$AWS_REGION" =~ ^[a-z0-9-]+$ ]] || fail "AWS_REGION is invalid."
 export AWS_REGION
 
-for variable in JWT_JWK_SET_URI CORS_ALLOWED_ORIGINS; do
+for variable in JWT_JWK_SET_URI JWT_ISSUER_URI JWT_CLIENT_ID CORS_ALLOWED_ORIGINS; do
     [[ -n "${!variable:-}" ]] || fail "$variable must be set in $ENV_FILE."
 done
 
@@ -87,6 +87,16 @@ case "$JWT_JWK_SET_URI" in
         fail "Replace the JWT_JWK_SET_URI placeholder with the real JWKS endpoint."
         ;;
 esac
+
+[[ "$JWT_ISSUER_URI" =~ ^https://[^/]+/.+ ]] \
+    || fail "JWT_ISSUER_URI must be a complete HTTPS URL."
+case "$JWT_ISSUER_URI" in
+    *example.invalid*|*localhost*|*127.0.0.1*)
+        fail "Replace the JWT_ISSUER_URI placeholder with the real issuer."
+        ;;
+esac
+[[ "$JWT_CLIENT_ID" =~ ^[A-Za-z0-9]{1,128}$ ]] \
+    || fail "JWT_CLIENT_ID must be a valid Cognito app client ID."
 
 IFS=',' read -r -a allowed_origins <<< "$CORS_ALLOWED_ORIGINS"
 ((${#allowed_origins[@]} > 0)) || fail "CORS_ALLOWED_ORIGINS must contain at least one origin."

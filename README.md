@@ -76,7 +76,9 @@ Variables:
 | `DB_APP_PASSWORD` | Contraseña del usuario `barriodigital_app`, limitado a las cuatro bases de aplicación. | Requerida. |
 | `BFF_PORT` | Puerto de loopback para BFF. | `8080` |
 | `EUREKA_PORT` | Puerto de loopback para Eureka. | `8761` |
-| `JWT_JWK_SET_URI` | JWKS para validar JWT en BFF. | `https://example.invalid/...` (placeholder; no permite autenticar). |
+| `JWT_JWK_SET_URI` | JWKS de Cognito para validar la firma JWT del BFF. | URL del User Pool configurado. |
+| `JWT_ISSUER_URI` | Issuer esperado en el claim `iss`. | URL del User Pool configurado. |
+| `JWT_CLIENT_ID` | App client esperado en los access tokens de Cognito. | Client ID configurado. |
 | `CORS_ALLOWED_ORIGINS` | Orígenes web autorizados por CORS. | `http://localhost:4200` |
 | `HTTP_CONNECT_TIMEOUT` | Tiempo máximo para establecer llamadas HTTP desde BFF y Requests. | `2s` |
 | `HTTP_READ_TIMEOUT` | Tiempo máximo para recibir respuestas HTTP desde BFF y Requests. | `5s` |
@@ -114,9 +116,8 @@ Puntos de entrada expuestos solo en loopback:
 
 Las APIs de Requests, Catalog, Crews y Report no tienen puertos publicados en
 Compose. Para probarlas manualmente se puede usar un cliente temporal en la red
-de Compose, sin abrir esos puertos al host. Para autenticar el BFF es necesario
-reemplazar el JWKS de ejemplo por uno válido y usar un JWT emitido para ese
-proveedor.
+de Compose, sin abrir esos puertos al host. Para autenticar el BFF se requiere
+un access token válido de Cognito para el issuer y client ID configurados.
 
 Detención sin borrar datos:
 
@@ -308,9 +309,10 @@ máximo de una réplica por nodo.
   autorizados. No abrir MySQL `3306`, Eureka `8761` ni puertos de dominio.
   Los puertos de control y overlay de Swarm deben permitirse solo entre los
   nodos del clúster.
-- Un `JWT_JWK_SET_URI` HTTPS real y origins HTTPS concretos en
-  `CORS_ALLOWED_ORIGINS`. Los placeholders del ejemplo son rechazados por el
-  script. La autenticación JWT permanece habilitada.
+- `JWT_JWK_SET_URI` y `JWT_ISSUER_URI` HTTPS del User Pool, `JWT_CLIENT_ID` del
+  app client y origins HTTPS concretos en `CORS_ALLOWED_ORIGINS`. Los valores
+  Cognito del ejemplo corresponden al User Pool configurado; los origins de
+  ejemplo deben reemplazarse. La autenticación JWT permanece habilitada.
 
 La autenticación AWS debe estar disponible en el entorno del Manager; no guardes
 access keys en `.env.aws`. El script consulta la cuenta con STS, deriva
@@ -329,7 +331,9 @@ carga automáticamente `.env`.
 | `AWS_REGION` | Opcional; `us-east-1` por defecto | STS/ECR |
 | `ECR_REGISTRY` | Opcional; el script la deriva y comprueba | Registry de la cuenta activa |
 | `BFF_IMAGE_TAG`, `CATALOG_IMAGE_TAG`, `REQUESTS_IMAGE_TAG`, `CREWS_IMAGE_TAG`, `REPORT_IMAGE_TAG`, `EUREKA_IMAGE_TAG` | SHA recomendado; `latest` por defecto | Tag independiente por repositorio |
-| `JWT_JWK_SET_URI` | Obligatoria; HTTPS real | Validación JWT del BFF |
+| `JWT_JWK_SET_URI` | Obligatoria; HTTPS del User Pool | Validación de firma JWT |
+| `JWT_ISSUER_URI` | Obligatoria; HTTPS del User Pool | Validación del claim `iss` |
+| `JWT_CLIENT_ID` | Obligatoria; app client ID de Cognito | Validación de access tokens |
 | `CORS_ALLOWED_ORIGINS` | Obligatoria; origins HTTPS separados por coma | CORS del BFF |
 | `BFF_PORT` | Opcional; `8080` por defecto | Único puerto publicado |
 | `EUREKA_SERVER_URL` | Opcional; `http://eureka:8761/eureka/` | Registro de los clientes |
@@ -372,8 +376,9 @@ chmod 600 .env.aws
 ${EDITOR:-vi} .env.aws
 ```
 
-Reemplaza `JWT_JWK_SET_URI` y `CORS_ALLOWED_ORIGINS`, y asigna los SHA de cada
-workflow a sus variables de tag. Luego ejecuta:
+Verifica `JWT_JWK_SET_URI`, `JWT_ISSUER_URI` y `JWT_CLIENT_ID`; reemplaza
+`CORS_ALLOWED_ORIGINS` y asigna los SHA de cada workflow a sus variables de
+tag. Luego ejecuta:
 
 ```bash
 aws sts get-caller-identity
