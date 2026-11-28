@@ -253,20 +253,173 @@ Resources:
       PayloadFormatVersion: '1.0'
       TimeoutInMillis: 30000
 
-  BffProxyRoute:
+  BffListRequestsRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref BarrioDigitalHttpApi
-      RouteKey: 'ANY /{proxy+}'
+      RouteKey: 'GET /api/v1/requests'
       AuthorizationType: JWT
       AuthorizerId: !Ref CognitoJwtAuthorizer
       Target: !Sub 'integrations/${BffApiIntegration}'
 
-  BffRootRoute:
+  BffCreateRequestRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref BarrioDigitalHttpApi
-      RouteKey: 'ANY /'
+      RouteKey: 'POST /api/v1/requests'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffListMyRequestsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'GET /api/v1/requests/me'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffGetRequestRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'GET /api/v1/requests/{id}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffUpdateRequestStatusRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'PATCH /api/v1/requests/{id}/status'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffListProcedureTypesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'GET /api/v1/procedure-types'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffCreateProcedureTypeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'POST /api/v1/procedure-types'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffGetProcedureTypeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'GET /api/v1/procedure-types/{id}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffUpdateProcedureTypeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'PUT /api/v1/procedure-types/{id}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffGetProcedureTypeAvailabilityRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'GET /api/v1/procedure-types/{id}/availability'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffUpdateProcedureTypeQuotaRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'PATCH /api/v1/procedure-types/{id}/quota'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffListCrewsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'GET /api/v1/crews'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffCreateCrewRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'POST /api/v1/crews'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffListCrewAssignmentsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'GET /api/v1/crew-assignments'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffCreateCrewAssignmentRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'POST /api/v1/crew-assignments'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffGetReportKpisRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'GET /api/v1/reports/kpis'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffGetReportRequestsByStatusRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'GET /api/v1/reports/requests-by-status'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffGetReportTopProcedureTypesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'GET /api/v1/reports/top-procedure-types'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      Target: !Sub 'integrations/${BffApiIntegration}'
+
+  BffGetActuatorHealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BarrioDigitalHttpApi
+      RouteKey: 'GET /actuator/health'
       AuthorizationType: JWT
       AuthorizerId: !Ref CognitoJwtAuthorizer
       Target: !Sub 'integrations/${BffApiIntegration}'
