@@ -1,8 +1,9 @@
-# BarrioDigital — infraestructura local
+# BarrioDigital — infraestructura local y AWS
 
 Este repositorio contiene Eureka y los artefactos para ejecutar localmente los
-servicios activos de BarrioDigital. Las instrucciones se orientan a Windows y
-PowerShell; no realizan operaciones contra AWS ni configuran GitHub Actions.
+servicios activos de BarrioDigital, además de los artefactos para el despliegue
+AWS EP3. Las secciones locales se orientan a Windows y PowerShell; los scripts
+AWS se ejecutan en Linux o Git Bash con credenciales temporales vigentes.
 
 ## Arquitectura local activa
 
@@ -20,12 +21,13 @@ Browser ── localhost ──► │ BFF :8080     │ ──JWT/REST──┐
                                           ▼
                               MySQL :3306 (red interna)
 
- Eureka :8761 ◄──── los clientes activos se registran y descubren servicios
+ Eureka :8761 ◄──── servicios registrados; Requests descubre Catalog
 ```
 
 Solo BFF y Eureka publican puertos al host en Compose. Las APIs de dominio y
 MySQL permanecen en la red Docker. BFF valida JWT/roles; Requests consulta
-Catalog por Eureka. Cada servicio conserva su base lógica en MySQL.
+Catalog por Eureka; BFF llama a los servicios por DNS interno y puerto. Cada
+servicio conserva su base lógica en MySQL.
 
 Componentes activos:
 
@@ -42,10 +44,10 @@ Componentes activos:
 Audit y Notify fueron retirados de la arquitectura ejecutable. Sus repositorios
 se conservan sin cambios; el traslado físico fuera del workspace quedó pendiente
 porque Windows reportó que otro proceso mantiene abiertos ambos directorios.
-RabbitMQ y Kafka no se levantan ni se usan. Report conserva sus endpoints, pero
-no tiene un proceso de carga de `RequestReport`; no se deben presentar sus
-respuestas vacías como estadísticas productivas. Las notificaciones con
-SQS/Lambda son una etapa cloud futura.
+RabbitMQ y Kafka no se levantan ni se usan. Report conserva sus endpoints y
+recibe eventos mediante SQS/Lambda en AWS. La publicación local a SQS está
+deshabilitada por defecto; sin configurar una cola local, Report refleja solo
+los datos reales de `report_db`, sin generar estadísticas simuladas.
 
 ## Requisitos
 
@@ -256,6 +258,7 @@ se detallan en los README de cada servicio y en los contratos OpenAPI.
 | MySQL queda `unhealthy` | Revisar `docker compose logs mysql`; comprobar que el volumen no tenga credenciales de un arranque anterior incompatibles. |
 | Servicio no aparece en Eureka | Revisar salud de Eureka, `EUREKA_SERVER_URL` y `docker compose logs <servicio>`. |
 | Requests no descubre Catalog | Confirmar que Catalog aparezca como `CATALOG-MS` y que `CATALOG_SERVICE_URL` use el ID lógico `http://catalog-ms`. |
+| BFF falla al llamar un servicio | Comprobar que los nombres DNS y puertos internos de `REQUESTS_SERVICE_URL`, `CATALOG_SERVICE_URL`, `CREWS_SERVICE_URL` y `REPORT_SERVICE_URL` coincidan con el stack. |
 | BFF responde 401/403 | Es esperado sin JWT válido o sin rol; configurar un JWKS real y claims de roles antes de probar rutas protegidas. |
 | Cambio de contraseña no se aplica en Swarm | La contraseña de MySQL ya persistida y el secreto externo no se rotan automáticamente; planificar la rotación. |
 | Docker no puede construir | Verificar Docker Engine, espacio disponible y acceso al registry de imágenes base/Maven Central. |
@@ -267,21 +270,23 @@ El stack AWS reutiliza los nombres de servicios, la red overlay, la
 configuración de Eureka y el volumen `mysql_data` del stack local. MySQL queda
 fijado al Manager; las réplicas de BFF, Requests y Catalog se distribuyen entre
 ambos nodos. Eureka, Crews y Report tienen una réplica fijada al Manager para
-dejar más memoria al Worker de 4 GiB. Solo se publica el puerto del BFF.
-Eureka, MySQL y las APIs de dominio permanecen en la red privada del stack.
+dejar más memoria al Worker de 4 GiB. El BFF publica 8080 solo detrás del NLB
+interno; Report publica 8087 únicamente para la Lambda dentro de la VPC.
+Eureka, MySQL y las demás APIs permanecen en la red privada del stack.
 
 ```text
-Cliente permitido por Security Group
-                │
-                ▼
-          BFF :8080 (2 réplicas)
-       ┌────────┼────────┬────────┐
-       ▼        ▼        ▼        ▼
-   Requests   Catalog   Crews    Report
-       │        ▲
-       └────────┘ REST por Eureka
-            │
-    MySQL (Manager)
+Cliente + Cognito JWT
+         │
+         ▼
+ API Gateway HTTP API ── VPC Link ── NLB interno ── BFF :8080 (2)
+                                                      │
+                          ┌──────────────┬─────────────┼─────────────┐
+                          ▼              ▼             ▼             ▼
+                      Requests       Catalog         Crews         Report
+                          │              ▲                           ▲
+                          └──── REST por Eureka                      │
+                          │                                           │
+                    MySQL (Manager)                 SQS → Lambda ─────┘
 ```
 
 El stack está en [`docker-stack.aws.yml`](./docker-stack.aws.yml) y no contiene
@@ -305,8 +310,9 @@ máximo de una réplica por nodo.
 - Permisos ECR de pull y repositorios para las seis imágenes en `us-east-1`.
 - Secretos Swarm `barriodigital_db_password` y
   `barriodigital_db_app_password` creados en el Manager.
-- Security Group: permitir el puerto del BFF solo desde los clientes
-  autorizados. No abrir MySQL `3306`, Eureka `8761` ni puertos de dominio.
+- Security Group: permitir el puerto del BFF solo desde el SG del NLB y Report
+  `8087` solo desde el SG de Lambda. No abrir MySQL `3306`, Eureka `8761` ni
+  puertos de dominio.
   Los puertos de control y overlay de Swarm deben permitirse solo entre los
   nodos del clúster.
 - `JWT_JWK_SET_URI` y `JWT_ISSUER_URI` HTTPS del User Pool, `JWT_CLIENT_ID` del
@@ -337,7 +343,7 @@ carga automáticamente `.env`.
 | `CORS_ALLOWED_ORIGINS` | Obligatoria; origins HTTPS separados por coma | CORS del BFF |
 | `BFF_PORT` | Opcional; `8080` por defecto | Único puerto publicado |
 | `EUREKA_SERVER_URL` | Opcional; `http://eureka:8761/eureka/` | Registro de los clientes |
-| `REQUESTS_SERVICE_URL`, `CATALOG_SERVICE_URL`, `CREWS_SERVICE_URL`, `REPORT_SERVICE_URL` | Opcionales; IDs lógicos por defecto | Resolución de servicios vía Eureka |
+| `REQUESTS_SERVICE_URL`, `CATALOG_SERVICE_URL`, `CREWS_SERVICE_URL`, `REPORT_SERVICE_URL` | Opcionales; DNS/puertos internos por defecto | Llamadas HTTP del BFF dentro de Compose/Swarm |
 | `HTTP_CONNECT_TIMEOUT`, `HTTP_READ_TIMEOUT` | Opcionales; `2s` y `5s` | Timeouts HTTP |
 
 El stack utiliza los secretos Swarm para las credenciales de MySQL; no se
@@ -383,7 +389,18 @@ tag. Luego ejecuta:
 ```bash
 aws sts get-caller-identity
 docker node ls
-./scripts/deploy-aws.sh --env-file .env.aws
+```
+
+Después de provisionar EP3 y obtener la URL de SQS:
+
+```bash
+QUEUE_URL="$(aws cloudformation describe-stacks --region us-east-1 \
+  --stack-name barriodigital-ep3 \
+  --query "Stacks[0].Outputs[?OutputKey=='RequestEventsQueueUrl'].OutputValue | [0]" \
+  --output text)"
+./scripts/deploy-aws.sh --env-file .env.aws \
+  --set SQS_EVENTS_ENABLED=true \
+  --set "REQUEST_EVENTS_QUEUE_URL=$QUEUE_URL"
 ```
 
 `deploy-aws.sh` comprueba AWS CLI, Docker, el estado de Manager y al menos dos
@@ -431,11 +448,257 @@ docker volume ls --filter name=barriodigital_mysql_data
 volumen nombrado. No ejecutes `docker volume rm` ni `docker volume prune` si
 debes conservar la base de datos.
 
-## AWS y CI/CD
+## AWS EP3: eventos y API Gateway
 
-Este repositorio prepara un despliegue manual desde el Manager. No implementa
-SQS, Lambda, API Gateway ni despliegue remoto desde GitHub Actions. La
-integración de esos componentes queda fuera del alcance de este despliegue.
+La arquitectura cloud integra eventos de solicitudes y una entrada protegida
+para el BFF:
+
+```text
+Requests → outbox MySQL → SQS → Lambda → Report :8087
+                                       (SG privado)
+
+Cliente → API Gateway HTTP API + Cognito JWT
+        → VPC Link → NLB interno → BFF :8080
+```
+
+Se reutilizan las colas existentes `barriodigital-requests-events` y
+`barriodigital-requests-dlq`; la provisión configura el redrive tras cinco
+entregas sin crear colas nuevas. Requests registra
+el evento en su misma transacción de negocio y reintenta su publicación desde
+la tabla outbox; la entrega es al menos una vez. Lambda devuelve fallos
+parciales para que SQS reintente solo esos mensajes. Report registra cada
+`eventId` y procesa los cambios de forma idempotente. El endpoint de Report no
+está en el BFF ni en API Gateway.
+
+API Gateway valida issuer y audiencia de Cognito. El BFF conserva su validación
+JWT y la autorización por grupos. El NLB es interno y el grupo de seguridad del
+Swarm debe permitir el BFF únicamente desde el SG del NLB. El puerto 8087 se
+permite únicamente desde el SG de Lambda. Los puertos de MySQL, Eureka y los
+servicios de dominio no se exponen públicamente.
+
+### Requisitos y restricciones del laboratorio
+
+- Los dos EC2 existentes deben estar `running`, en la misma VPC y registrados
+  en el Swarm; los scripts usan sus IDs existentes y no crean ni reemplazan
+  instancias.
+- AWS CLI, Docker y Python 3; sesión temporal vigente de AWS Academy con STS,
+  ECR, CloudFormation, EC2/ELB, SQS, Lambda, API Gateway y SSM autorizados.
+- Docker Swarm Manager administrado por Systems Manager para la automatización
+  desde GitHub Actions. Si SSM no está habilitado en el Manager, se puede
+  ejecutar `deploy-aws.sh` manualmente desde ese nodo.
+- Un rol existente de EC2/Lambda (por defecto `LabRole`) adjunto al
+  `LabInstanceProfile` y con trust para `lambda.amazonaws.com`; la plantilla
+  adjunta permisos SQS, CloudWatch Logs y ENI a ese mismo rol.
+- Dos subredes de la VPC del Swarm en distintas AZ para el VPC Link y el NLB.
+- AWS Academy puede restringir IAM, Lambda dentro de VPC, ELB/NLB, VPC Link,
+  CloudFormation o API Gateway. La plantilla informa el primer recurso no
+  autorizado; esos límites requieren habilitación manual por el laboratorio.
+- El NLB y VPC Link generan cargos por hora/uso; confirma presupuesto y cuota
+  del Learner Lab antes de ejecutar el workflow.
+
+No se ejecutó provisión AWS en esta implementación; la existencia de plantillas
+y scripts no confirma que esos recursos hayan sido creados. La solución no
+crea, reemplaza ni termina los EC2 actuales.
+
+### Variables AWS
+
+Configura las variables en el archivo privado `.env.aws`, basado en
+[`.env.example`](./.env.example). No almacenes access keys ni tokens ahí.
+
+| Variable | Descripción |
+|---|---|
+| `AWS_REGION` | Región del laboratorio; `us-east-1`. |
+| `EP3_STACK_NAME` | Nombre de la pila CloudFormation; `barriodigital-ep3`. |
+| `MANAGER_INSTANCE_ID`, `WORKER_INSTANCE_ID` | IDs de las instancias EC2 ya existentes. |
+| `MANAGER_PRIVATE_IP`, `WORKER_PRIVATE_IP` | IP privadas actuales; se validan contra las instancias existentes. La IP del Manager se usa para Lambda→Report. |
+| `VPC_ID`, `VPC_SUBNET_IDS` | VPC y dos o más subredes existentes, separadas por coma. |
+| `SWARM_SECURITY_GROUP_ID` | Security Group actualmente asociado a los nodos Swarm. |
+| `LAMBDA_ROLE_NAME` | Rol existente de Lambda/Requests; por defecto `LabRole`. |
+| `LAMBDA_IMAGE_TAG`, `LAMBDA_IMAGE_URI` | Tag y URI ECR de la imagen Java de Lambda. |
+| `JWT_ISSUER_URI`, `JWT_CLIENT_ID` | Issuer y app client existentes de Cognito. |
+| `CORS_ALLOWED_ORIGINS` | Orígenes HTTPS exactos permitidos por API Gateway y BFF. |
+| `SQS_EVENTS_ENABLED` | `true` para AWS; local permanece en `false`. |
+| `REQUEST_EVENTS_QUEUE_URL` | URL de la cola existente, expuesta como output y usada por Requests. |
+| `BFF_IMAGE_TAG` … `EUREKA_IMAGE_TAG` | SHA independiente recomendado por cada repositorio. |
+
+Requests obtiene credenciales temporales de la instancia mediante el perfil ya
+asociado a EC2; no se agrega ninguna credencial a Docker Stack. En local, SQS se
+mantiene deshabilitado y el resto de Compose no cambia. Verifica que el Manager
+tenga asociado el `LabInstanceProfile` esperado y que IMDSv2 permita el acceso
+desde contenedores (`HttpPutResponseHopLimit` de al menos 2); no se cambian esas
+opciones automáticamente.
+
+### Provisionar recursos sin tocar las instancias
+
+Desde Manager o desde un runner Linux con credenciales temporales:
+
+```bash
+cd barriodigital-infra
+cp .env.example .env.aws
+chmod 600 .env.aws
+${EDITOR:-vi} .env.aws
+```
+
+Completa los IDs/VPC/subredes/SG y reemplaza el origin de CORS. Construye y
+publica el contenedor Lambda en ECR:
+
+```bash
+AWS_REGION=us-east-1 LAMBDA_IMAGE_TAG=latest bash scripts/build-report-lambda.sh
+```
+
+Pon el URI que muestra el comando en `LAMBDA_IMAGE_URI` dentro de `.env.aws`.
+Valida primero los recursos y permisos:
+
+```bash
+bash scripts/provision-ep3.sh --env-file .env.aws
+```
+
+El preflight inspecciona las instancias, la VPC, el SG, el rol, STS y la
+plantilla; sin `--apply` no crea ni modifica recursos. Para provisionar la pila
+SQS/DLQ, Lambda, permisos, NLB interno y HTTP API:
+
+```bash
+bash scripts/provision-ep3.sh --env-file .env.aws --apply
+```
+
+Una vez que CloudFormation cree el NLB, elimina las reglas anteriores que
+permiten acceso directo al puerto BFF y deja solo el SG del NLB:
+
+```bash
+python3 scripts/lock-bff-ingress.py \
+  --region us-east-1 \
+  --swarm-security-group-id '<swarm-security-group-id>' \
+  --nlb-security-group-id '<output-BffLoadBalancerSecurityGroupId>' \
+  --apply
+```
+
+El script no elimina reglas amplias que afecten otros puertos: si detecta una,
+falla y pide estrecharla manualmente en lugar de modificar tráfico no relacionado.
+No continúes hasta que el puerto 8080 acepte únicamente el SG del NLB.
+
+Obtén la URL de la cola y despliega el stack Swarm; el script conserva los
+volúmenes existentes:
+
+```bash
+QUEUE_URL="$(aws cloudformation describe-stacks \
+  --region us-east-1 \
+  --stack-name barriodigital-ep3 \
+  --query "Stacks[0].Outputs[?OutputKey=='RequestEventsQueueUrl'].OutputValue | [0]" \
+  --output text)"
+./scripts/deploy-aws.sh --env-file .env.aws \
+  --set SQS_EVENTS_ENABLED=true \
+  --set "REQUEST_EVENTS_QUEUE_URL=$QUEUE_URL"
+```
+
+La plantilla y el workflow usan el rol `LabRole` compartido con las instancias;
+el preflight verifica el perfil y trust de Lambda. AWS Academy puede impedir
+esa trust policy o la adjunción de permisos, en cuyo caso se requiere
+habilitación manual antes de ejecutar el despliegue.
+No guardes credenciales AWS en `.env.aws`, archivos del workflow ni en Git;
+usa únicamente GitHub Actions secrets para la automatización.
+
+### CI/CD
+
+Los workflows de cada microservicio prueban y publican imágenes versionadas en
+ECR al actualizar `main`; requieren `AWS_REGION` y los secretos AWS temporales
+en cada repositorio (o a nivel de organización). Para desplegar, configura el
+environment de GitHub `aws-ep3` con las variables de infraestructura de la
+tabla, `DEPLOY_ROOT` (ruta absoluta del repositorio en el Manager) y los secretos
+temporales `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` y `AWS_SESSION_TOKEN`
+de AWS Academy. Ejecuta manualmente **Actions → EP3 deployment**; usa SSM en el
+Manager existente, reutiliza las colas y no crea ni reemplaza instancias EC2.
+
+### Verificación, logs y escalabilidad
+
+```bash
+docker stack services barriodigital
+docker stack ps barriodigital --no-trunc
+aws elbv2 describe-target-health --target-group-arn '<BffTargetGroupArn>'
+aws lambda get-function-configuration --function-name barriodigital-ep3-report-consumer
+aws lambda list-event-source-mappings --function-name barriodigital-ep3-report-consumer
+aws sqs get-queue-attributes --queue-url "$QUEUE_URL" \
+  --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible RedrivePolicy
+aws logs tail /aws/lambda/barriodigital-ep3-report-consumer --since 15m
+```
+
+Para comprobar la DLQ, consulta sus atributos sin consumir mensajes:
+
+```bash
+DLQ_URL="$(aws cloudformation describe-stacks --region us-east-1 \
+  --stack-name barriodigital-ep3 \
+  --query "Stacks[0].Outputs[?OutputKey=='RequestEventsDlqUrl'].OutputValue | [0]" \
+  --output text)"
+aws sqs get-queue-attributes --queue-url "$DLQ_URL" \
+  --attribute-names ApproximateNumberOfMessages RedrivePolicy
+```
+
+No consumas la cola principal con `receive-message` durante la demostración.
+Crea una solicitud por API Gateway
+con un access token válido de Cognito y luego consulta
+`/api/v1/reports/kpis` por la misma API:
+
+```bash
+export ACCESS_TOKEN='<Cognito access token>'
+API_ENDPOINT="$(aws cloudformation describe-stacks --region us-east-1 \
+  --stack-name barriodigital-ep3 \
+  --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue | [0]" \
+  --output text)"
+curl -H "Authorization: Bearer $ACCESS_TOKEN" "$API_ENDPOINT/api/v1/reports/kpis"
+curl -sS -o /dev/null -w '%{http_code}\n' "$API_ENDPOINT/api/v1/reports/kpis"
+```
+
+La primera petición consulta el KPI y la segunda, sin token, debe responder
+401, demostrando que el authorizer JWT está activo. La verificación directa al
+puerto BFF debe fallar desde Internet.
+
+Las réplicas stateless pueden escalarse desde el Manager; MySQL permanece fijado
+al Manager:
+
+```bash
+docker service scale barriodigital_requests=3 barriodigital_bff=3
+docker service ps barriodigital_requests
+docker node ls
+```
+
+Restaurar las réplicas declaradas en el stack con
+`./scripts/deploy-aws.sh --env-file .env.aws --set SQS_EVENTS_ENABLED=true
+--set "REQUEST_EVENTS_QUEUE_URL=$QUEUE_URL"`. No escales MySQL ni elimines su
+volumen.
+
+### Automatización GitHub Actions
+
+Los repositorios de servicios ya ejecutan build/test y publican imágenes en
+ECR. El workflow `EP3 deployment` de este repositorio se ejecuta manualmente
+desde Actions para usar credenciales temporales vigentes del Learner Lab. Crea
+los siguientes **secrets** en el environment `aws-ep3`:
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_SESSION_TOKEN`
+
+Configura como **variables** del environment `aws-ep3` las variables de
+infraestructura de la tabla anterior más `DEPLOY_ROOT`, ruta absoluta donde el
+Manager tiene los repositorios clonados (por ejemplo `/opt/barriodigital`).
+El Manager debe estar registrado en SSM. El workflow construye/prueba la
+Lambda, publica su imagen, actualiza CloudFormation, restringe el puerto BFF,
+ejecuta `deploy-aws.sh` vía SSM y verifica targets y el rechazo HTTP 401.
+
+### Comprobación local y demostración EP3
+
+Requests tiene pruebas de outbox/reintentos, Report tiene prueba de integración
+para duplicados y eventos fuera de orden, y Lambda prueba fallos parciales. La
+cola real, API Gateway, Cognito y conectividad VPC solo se validan después de
+provisionar recursos en la cuenta.
+
+Guion breve para el video:
+
+1. Mostrar `docker node ls` y `docker stack services barriodigital`.
+2. Crear una solicitud usando el BFF/API Gateway y un access token Cognito.
+3. Mostrar el evento y los atributos de SQS; consultar los logs de Lambda.
+4. Consultar el KPI actualizado de Report y mostrar la deduplicación por `eventId`.
+5. Escalar Requests y mostrar la distribución entre Manager y Worker.
+6. Mostrar que API Gateway sin JWT devuelve 401 y que Report/MySQL no están
+   publicados a Internet.
 
 ## Estructura
 
