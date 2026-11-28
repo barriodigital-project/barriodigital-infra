@@ -260,12 +260,177 @@ se detallan en los README de cada servicio y en los contratos OpenAPI.
 | Docker no puede construir | Verificar Docker Engine, espacio disponible y acceso al registry de imágenes base/Maven Central. |
 | Puerto ocupado | Cambiar `BFF_PORT` o `EUREKA_PORT` en `.env`; no exponer servicios internos para resolver conflictos. |
 
+## Despliegue AWS con Docker Swarm
+
+El stack AWS reutiliza los nombres de servicios, la red overlay, la
+configuración de Eureka y el volumen `mysql_data` del stack local. MySQL queda
+fijado al Manager; las réplicas de BFF, Requests y Catalog se distribuyen entre
+ambos nodos. Eureka, Crews y Report tienen una réplica fijada al Manager para
+dejar más memoria al Worker de 4 GiB. Solo se publica el puerto del BFF.
+Eureka, MySQL y las APIs de dominio permanecen en la red privada del stack.
+
+```text
+Cliente permitido por Security Group
+                │
+                ▼
+          BFF :8080 (2 réplicas)
+       ┌────────┼────────┬────────┐
+       ▼        ▼        ▼        ▼
+   Requests   Catalog   Crews    Report
+       │        ▲
+       └────────┘ REST por Eureka
+            │
+    MySQL (Manager)
+```
+
+El stack está en [`docker-stack.aws.yml`](./docker-stack.aws.yml) y no contiene
+`build`. Las imágenes Java se descargan desde ECR; MySQL usa la imagen oficial
+`mysql:8.4`. Cada repositorio de servicio tiene su propio SHA, por lo que se
+usan `BFF_IMAGE_TAG`, `CATALOG_IMAGE_TAG`, `REQUESTS_IMAGE_TAG`,
+`CREWS_IMAGE_TAG`, `REPORT_IMAGE_TAG` y `EUREKA_IMAGE_TAG` en lugar de una
+etiqueta global. `latest` es un fallback; para despliegues reproducibles,
+configura cada variable con el SHA publicado por el workflow de ese
+componente.
+
+El límite de memoria agregado de los servicios es aproximadamente 5.25 GiB en
+el Manager (incluido MySQL) y 2.25 GiB en el Worker, antes de contar el sistema
+operativo. Las réplicas dobles de BFF, Requests y Catalog usan `spread` y un
+máximo de una réplica por nodo.
+
+### Requisitos y red
+
+- Docker Engine con un Swarm activo, un Manager y al menos un Worker listo.
+- AWS CLI configurado con una sesión vigente autorizada para STS y ECR.
+- Permisos ECR de pull y repositorios para las seis imágenes en `us-east-1`.
+- Secretos Swarm `barriodigital_db_password` y
+  `barriodigital_db_app_password` creados en el Manager.
+- Security Group: permitir el puerto del BFF solo desde los clientes
+  autorizados. No abrir MySQL `3306`, Eureka `8761` ni puertos de dominio.
+  Los puertos de control y overlay de Swarm deben permitirse solo entre los
+  nodos del clúster.
+- Un `JWT_JWK_SET_URI` HTTPS real y origins HTTPS concretos en
+  `CORS_ALLOWED_ORIGINS`. Los placeholders del ejemplo son rechazados por el
+  script. La autenticación JWT permanece habilitada.
+
+La autenticación AWS debe estar disponible en el entorno del Manager; no guardes
+access keys en `.env.aws`. El script consulta la cuenta con STS, deriva
+`ECR_REGISTRY` como `<account-id>.dkr.ecr.<region>.amazonaws.com` y valida
+cualquier valor que se haya configurado manualmente.
+
+### Variables
+
+Parte de [`.env.example`](./.env.example) y crea un archivo privado
+`.env.aws` en este repositorio. El `.gitignore` excluye `.env.*` excepto el
+ejemplo. El script exige recibir el archivo explícitamente; Docker Stack no
+carga automáticamente `.env`.
+
+| Variable | Requisito | Uso |
+|---|---|---|
+| `AWS_REGION` | Opcional; `us-east-1` por defecto | STS/ECR |
+| `ECR_REGISTRY` | Opcional; el script la deriva y comprueba | Registry de la cuenta activa |
+| `BFF_IMAGE_TAG`, `CATALOG_IMAGE_TAG`, `REQUESTS_IMAGE_TAG`, `CREWS_IMAGE_TAG`, `REPORT_IMAGE_TAG`, `EUREKA_IMAGE_TAG` | SHA recomendado; `latest` por defecto | Tag independiente por repositorio |
+| `JWT_JWK_SET_URI` | Obligatoria; HTTPS real | Validación JWT del BFF |
+| `CORS_ALLOWED_ORIGINS` | Obligatoria; origins HTTPS separados por coma | CORS del BFF |
+| `BFF_PORT` | Opcional; `8080` por defecto | Único puerto publicado |
+| `EUREKA_SERVER_URL` | Opcional; `http://eureka:8761/eureka/` | Registro de los clientes |
+| `REQUESTS_SERVICE_URL`, `CATALOG_SERVICE_URL`, `CREWS_SERVICE_URL`, `REPORT_SERVICE_URL` | Opcionales; IDs lógicos por defecto | Resolución de servicios vía Eureka |
+| `HTTP_CONNECT_TIMEOUT`, `HTTP_READ_TIMEOUT` | Opcionales; `2s` y `5s` | Timeouts HTTP |
+
+El stack utiliza los secretos Swarm para las credenciales de MySQL; no se
+incluyen contraseñas de base de datos en el archivo de variables.
+
+### Preparar secretos (solo si no existen)
+
+Ejecuta estos comandos en el Manager. Introduce cada valor en el prompt; no se
+imprime ni se guarda en el archivo de configuración. Si ya hay datos en el
+volumen, los valores deben coincidir con las credenciales con las que se creó
+esa base.
+
+```bash
+if ! docker secret inspect barriodigital_db_password >/dev/null 2>&1; then
+  read -r -s -p 'MySQL root password: ' DB_ROOT_PASSWORD
+  printf '\n'
+  printf '%s' "$DB_ROOT_PASSWORD" | docker secret create barriodigital_db_password -
+  unset DB_ROOT_PASSWORD
+fi
+
+if ! docker secret inspect barriodigital_db_app_password >/dev/null 2>&1; then
+  read -r -s -p 'MySQL application password: ' DB_APP_PASSWORD
+  printf '\n'
+  printf '%s' "$DB_APP_PASSWORD" | docker secret create barriodigital_db_app_password -
+  unset DB_APP_PASSWORD
+fi
+```
+
+### Desplegar y comprobar
+
+Desde `barriodigital-infra` en el Manager:
+
+```bash
+cp .env.example .env.aws
+chmod 600 .env.aws
+${EDITOR:-vi} .env.aws
+```
+
+Reemplaza `JWT_JWK_SET_URI` y `CORS_ALLOWED_ORIGINS`, y asigna los SHA de cada
+workflow a sus variables de tag. Luego ejecuta:
+
+```bash
+aws sts get-caller-identity
+docker node ls
+./scripts/deploy-aws.sh --env-file .env.aws
+```
+
+`deploy-aws.sh` comprueba AWS CLI, Docker, el estado de Manager y al menos dos
+nodos Ready; valida la configuración; verifica los secretos; inicia sesión en
+ECR y despliega con `docker stack deploy --with-registry-auth`. Es idempotente
+para las actualizaciones del stack y no elimina servicios de datos, secretos ni
+volúmenes. No se ejecutó el despliegue AWS durante la preparación de estos
+archivos.
+
+Verificación manual:
+
+```bash
+docker stack services barriodigital
+docker stack ps barriodigital --no-trunc
+curl http://localhost:8080/actuator/health
+```
+
+Consulta logs de servicios:
+
+```bash
+docker service logs --tail 100 barriodigital_bff
+docker service logs --tail 100 barriodigital_requests
+docker service logs --tail 100 barriodigital_mysql
+```
+
+Escalado manual de servicios stateless:
+
+```bash
+docker service scale barriodigital_bff=3
+docker service ps barriodigital_bff
+```
+
+Las réplicas deseadas están declaradas en el YAML; una futura ejecución del
+script vuelve a aplicar esos valores. MySQL no debe escalarse: el volumen local
+se fija al Manager y no ofrece failover ni almacenamiento compartido.
+
+Para detener el stack sin borrar datos:
+
+```bash
+docker stack rm barriodigital
+docker volume ls --filter name=barriodigital_mysql_data
+```
+
+`docker stack rm` detiene y elimina los servicios del stack, pero no elimina el
+volumen nombrado. No ejecutes `docker volume rm` ni `docker volume prune` si
+debes conservar la base de datos.
+
 ## AWS y CI/CD
 
-Esta fase no despliega recursos cloud ni crea workflows. La planificación
-ordenada de ECR, EC2/Swarm, red, base de datos, SQS/Lambda, API Gateway,
-Cognito, IAM y GitHub Actions está en
-[`docs/PENDIENTES_CLOUD_CICD.md`](./docs/PENDIENTES_CLOUD_CICD.md).
+Este repositorio prepara un despliegue manual desde el Manager. No implementa
+SQS, Lambda, API Gateway ni despliegue remoto desde GitHub Actions. La
+integración de esos componentes queda fuera del alcance de este despliegue.
 
 ## Estructura
 
